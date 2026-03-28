@@ -723,8 +723,12 @@ function ResultsView({ store, heroHandLabel }: { store: SolverState; heroHandLab
     : null
 
   // Engine-powered opponent range breakdown for OpponentRange component
+  // mainOpponentIdx is an index into potPlayers (includes hero),
+  // but opponentRangeBreakdown only has non-hero entries — need to map
+  const mainOppPosition = store.potPlayers[store.mainOpponentIdx]?.position
   const mainOppBreakdown = hasEngineResult && engineAnalysis.opponentRangeBreakdown.length > 0
-    ? engineAnalysis.opponentRangeBreakdown[store.mainOpponentIdx] ?? engineAnalysis.opponentRangeBreakdown[0]
+    ? engineAnalysis.opponentRangeBreakdown.find(r => r.position === mainOppPosition)
+      ?? engineAnalysis.opponentRangeBreakdown[0]
     : null
 
   return (

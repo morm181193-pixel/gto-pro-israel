@@ -911,85 +911,82 @@ export function narrowRangeByBoard(
   const texture = analyzeBoardTexture(board);
   const street = board.length <= 3 ? 'flop' : board.length === 4 ? 'turn' : 'river';
 
-  return combos.filter((combo) => {
-    const rank1Str = combo[0];
-    const rank2Str = combo[1];
-    const type = combo[2] as 's' | 'o' | undefined; // suited, offsuit, or pair
-    const rankMap: Record<string, Rank> = {
-      '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
-      '9': 9, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14,
-    };
-    const r1 = rankMap[rank1Str];
-    const r2 = rankMap[rank2Str];
-    if (!r1 || !r2) return true; // safety
+  const rankMap: Record<string, Rank> = {
+    '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
+    '9': 9, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14,
+  };
+  const boardRanks = board.map((c) => c.rank);
+
+  const filtered = combos.filter((combo) => {
+    const r1 = rankMap[combo[0]];
+    const r2 = rankMap[combo[1]];
+    const type = combo[2] as 's' | 'o' | undefined;
+    if (!r1 || !r2) return true;
 
     const isPair = r1 === r2;
-    const boardRanks = board.map((c) => c.rank);
     const hiRank = Math.max(r1, r2);
-    const loRank = Math.min(r1, r2);
 
-    // Does this hand connect with the board?
-    const hitsTopPair = boardRanks.includes(hiRank) && hiRank === texture.highCard;
+    // Board connectivity checks
     const hitsPair = boardRanks.includes(r1) || boardRanks.includes(r2);
+    const hitsTopPair = hitsPair && hiRank === texture.highCard;
     const hitsOverpair = isPair && r1 > texture.highCard;
     const hitsSet = isPair && boardRanks.includes(r1);
 
-    // Flush connectivity
+    // NOTE: We can't determine flush from combo strings (don't know which suit).
+    // Suited hands have ~25% chance of matching the flush suit.
+    // So we conservatively KEEP all suited hands when flush is relevant.
     const isSuited = type === 's';
-    const hasFlushDraw = isSuited && texture.flushDraw;
-    const hasMadeFlush = isSuited && texture.flushPossible;
 
-    // Straight connectivity: hand ranks close to board ranks
-    const allRanks = [...boardRanks, r1, r2].sort((a, b) => a - b);
-    const uniqueAll = [...new Set(allRanks)];
+    // Straight connectivity: do hand ranks + board form 4+ in a row?
     let hasStraightDraw = false;
-    let hasMadeStraight = false;
-    // Check 5-card windows for 4+ unique ranks (draw) or 5 (made)
-    const extAll = uniqueAll.includes(14) ? [1, ...uniqueAll] : [...uniqueAll];
+    const allRanks = [...new Set([...boardRanks, r1, r2])].sort((a, b) => a - b);
+    const extAll = allRanks.includes(14) ? [1, ...allRanks] : [...allRanks];
     for (let i = 0; i <= extAll.length - 4; i++) {
-      const window = extAll[i + 3] - extAll[i];
-      if (window <= 4) {
-        // Check that hero cards contribute to this window
+      if (extAll[i + 3] - extAll[i] <= 4) {
         const windowRanks = extAll.slice(i, i + 4);
-        const heroContributes = windowRanks.includes(r1) || windowRanks.includes(r2)
-          || (r1 === 14 && windowRanks.includes(1)) || (r2 === 14 && windowRanks.includes(1));
-        if (heroContributes) {
+        if (windowRanks.includes(r1) || windowRanks.includes(r2)
+          || (r1 === 14 && windowRanks.includes(1))) {
           hasStraightDraw = true;
-          // Check for 5 in a row
-          if (i + 4 < extAll.length && extAll[i + 4] - extAll[i] <= 4) {
-            hasMadeStraight = true;
-          }
+          break;
         }
       }
     }
 
-    const hasAnything = hitsPair || hitsOverpair || hitsSet || hasFlushDraw || hasMadeFlush || hasStraightDraw || hasMadeStraight;
-    const hasStrong = hitsTopPair || hitsOverpair || hitsSet || hasMadeFlush || hasMadeStraight;
-
-    // Street-based filtering thresholds
     switch (street) {
       case 'flop':
-        // Keep anything that connected, plus overcards (A/K high)
-        if (hasAnything) return true;
-        if (hiRank >= 13) return true; // AK+ overcards might continue
+        // Loose: keep pairs, draws, overcards, suited hands on flush boards
+        if (hitsPair || hitsOverpair || hitsSet) return true;
+        if (hasStraightDraw) return true;
+        if (isSuited && (texture.flushDraw || texture.flushPossible)) return true;
+        if (hiRank >= 13) return true; // overcards
         return false;
 
       case 'turn':
-        // Tighter: need pair+ or strong draw
-        if (hasStrong) return true;
-        if (hitsPair && hiRank >= 10) return true; // mid pair+ stays
-        if (hasFlushDraw || hasStraightDraw) return true; // draws stay
-        if (hitsOverpair) return true;
+        // Medium: need pair or real draw
+        if (hitsPair || hitsOverpair || hitsSet) return true;
+        if (hasStraightDraw) return true;
+        if (isSuited && (texture.flushDraw || texture.flushPossible)) return true;
+        if (hiRank >= 14) return true; // ace-high might float
         return false;
 
       case 'river':
-        // Tightest: need made hand
-        if (hasStrong) return true;
-        if (hitsPair && hiRank >= 10) return true;
-        // No more draws on river — only made hands
+        // Still not too tight — opponent could have any pair, or bluffs
+        if (hitsPair || hitsOverpair || hitsSet) return true;
+        if (isSuited && texture.flushPossible) return true; // could have flush
+        if (hasStraightDraw) return true; // could have made straight
+        if (hiRank >= 14) return true; // ace-high for bluff/showdown value
         return false;
     }
   });
+
+  // SAFETY: if narrowing removed too many hands, use original range
+  // (prevents opponents from getting random hands and breaking equity)
+  if (filtered.length < 5) {
+    console.log(`[narrowRangeByBoard] Range too small (${filtered.length}), using original ${combos.length} combos`);
+    return combos;
+  }
+
+  return filtered;
 }
 
 // ────────────────────────────────────────────
@@ -1043,14 +1040,17 @@ function categorizeRange(
     const hitsPair = boardRanks.includes(r1) || boardRanks.includes(r2);
     const hitsOverpair = isPair && r1 > texture.highCard;
     const hitsSet = isPair && boardRanks.includes(r1);
-    const hasMadeFlush = type === 's' && texture.flushPossible;
-    const hasFlushDraw = type === 's' && texture.flushDraw;
+    // Suited hands have ~25% chance of matching flush suit (can't know from combo string)
+    const isSuited = type === 's';
+    const maybeFlush = isSuited && texture.flushPossible;
+    const maybeFlushDraw = isSuited && texture.flushDraw;
 
-    if (hitsSet || hasMadeFlush || (hitsOverpair && isPair)) {
+    if (hitsSet || hitsOverpair) {
       value++;
-    } else if (hitsTopPair || (hitsPair && hiRank >= 10)) {
+    } else if (hitsTopPair || maybeFlush) {
+      // Top pair or possible flush — treat as marginal-to-value
       marginal++;
-    } else if (hasFlushDraw || (hitsPair && hiRank < 10)) {
+    } else if (hitsPair || maybeFlushDraw) {
       draws++;
     } else {
       air++;
@@ -1075,11 +1075,7 @@ export function analyzeSpotEnhanced(setup: TableSetup): EnhancedAnalysisResult {
   const texture = analyzeBoardTexture(board);
   const deadCards = [...heroCards, ...board];
 
-  // For postflop: narrow opponent ranges by board texture
-  const enhancedSetup: TableSetup = { ...setup };
-
-  // Run base analysis (uses original analyzeSpot internally re-implemented here
-  // to apply board narrowing without modifying the original function)
+  // Run enhanced analysis with board-aware range narrowing
   const numSimulations = setup.numSimulations || 20000;
   const numTrials = 5;
   const totalEquities: number[] = new Array(opponents.length + 1).fill(0);
@@ -1118,10 +1114,15 @@ export function analyzeSpotEnhanced(setup: TableSetup): EnhancedAnalysisResult {
       const finalRange = boardNarrowed.length > 0 ? boardNarrowed : actionNarrowed;
       const possibleHands = expandRange(finalRange, deadCards);
 
+      if (trial === 0) {
+        console.log(`[analyzeSpotEnhanced] ${opp.position} (${opp.action}): base=${baseRange.length}, afterAction=${actionNarrowed.length}, afterBoard=${boardNarrowed.length}, final=${finalRange.length}, expandedHands=${possibleHands.length}`);
+      }
+
       if (possibleHands.length > 0) {
         const randomHand = possibleHands[Math.floor(Math.random() * possibleHands.length)];
         trialPlayers.push({ cards: randomHand });
       } else {
+        console.log(`[analyzeSpotEnhanced] WARNING: ${opp.position} has 0 possible hands, using random`);
         trialPlayers.push({ cards: [] });
       }
     }
