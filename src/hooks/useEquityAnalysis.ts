@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import type { Card as AppCard, Position, PlayerAction } from '@/types/poker'
-import type { Card as EngineCard, TableSetup, Action, EnhancedAnalysisResult, BoardTexture } from '@/engine/poker-engine'
+import type { Card as EngineCard, TableSetup, Action, EnhancedAnalysisResult, BoardTexture, HandStrengthInfo } from '@/engine/poker-engine'
 import type { WorkerRequest, WorkerResponse } from '@/engine/equity.worker'
 import EquityWorker from '@/engine/equity.worker?worker'
 
@@ -50,6 +50,7 @@ export interface EquityAnalysis {
   timeMs: number
   isCalculating: boolean
   boardTexture: BoardTexture | null
+  handStrength: HandStrengthInfo | null
   opponentRangeBreakdown: RangeBreakdown[]
 }
 
@@ -62,6 +63,7 @@ const EMPTY: EquityAnalysis = {
   timeMs: 0,
   isCalculating: false,
   boardTexture: null,
+  handStrength: null,
   opponentRangeBreakdown: [],
 }
 
@@ -93,6 +95,7 @@ export function useEquityAnalysis() {
         timeMs: result.timeMs,
         isCalculating: false,
         boardTexture: result.boardTexture,
+        handStrength: result.handStrength,
         opponentRangeBreakdown: result.opponentRangeBreakdown,
       })
     }

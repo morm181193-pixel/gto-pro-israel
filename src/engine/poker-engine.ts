@@ -290,6 +290,7 @@ export function calculateEquity(
 
   const wins = new Array(numPlayers).fill(0);
   const ties = new Array(numPlayers).fill(0);
+  const tieShares = new Array(numPlayers).fill(0);
 
   // Cards that are known (on board + in known hands)
   const knownCards: Card[] = [...board];
@@ -342,15 +343,17 @@ export function calculateEquity(
     if (winners.length === 1) {
       wins[winners[0]]++;
     } else {
-      // Split pot (tie)
+      // Split pot (tie) — each winner gets 1/N of the pot
+      const share = 1 / winners.length;
       for (const w of winners) {
         ties[w]++;
+        tieShares[w] += share;
       }
     }
   }
 
   const equities = players.map((_, i) => {
-    return (wins[i] + ties[i] / 2) / numSimulations;
+    return (wins[i] + tieShares[i]) / numSimulations;
   });
 
   return {
@@ -970,11 +973,14 @@ export function narrowRangeByBoard(
         return false;
 
       case 'river':
-        // Still not too tight — opponent could have any pair, or bluffs
-        if (hitsPair || hitsOverpair || hitsSet) return true;
-        if (isSuited && texture.flushPossible) return true; // could have flush
-        if (hasStraightDraw) return true; // could have made straight
-        if (hiRank >= 14) return true; // ace-high for bluff/showdown value
+        // Aggressive: on river, players who stayed have MADE hands.
+        // Only keep: pair+, made flush (suited on flush board), made straight
+        if (hitsSet || hitsOverpair) return true;              // set / overpair = strong
+        if (hitsTopPair) return true;                          // top pair stays
+        if (hitsPair && hiRank >= 9) return true;              // decent pair (9+)
+        if (isSuited && texture.flushPossible) return true;    // ~25% chance they have flush
+        if (hasStraightDraw) return true;                      // could be made straight
+        // Everything else is air — folded by river in a multiway pot
         return false;
     }
   });
@@ -993,8 +999,16 @@ export function narrowRangeByBoard(
 // 10. ENHANCED ANALYSIS (board-texture-aware)
 // ────────────────────────────────────────────
 
+export interface HandStrengthInfo {
+  category: string;         // e.g. "High Card", "One Pair"
+  hebrewCategory: string;   // e.g. "קלף גבוה", "זוג"
+  rankPercentile: number;   // 0-100, where 100 = best possible hand
+  strength: 'nuts' | 'strong' | 'medium' | 'weak' | 'air';
+}
+
 export interface EnhancedAnalysisResult extends AnalysisResult {
   boardTexture: BoardTexture;
+  handStrength: HandStrengthInfo | null;
   /** Opponent range categories for UI display */
   opponentRangeBreakdown: {
     position: string;
@@ -1191,6 +1205,72 @@ export function analyzeSpotEnhanced(setup: TableSetup): EnhancedAnalysisResult {
       equity: avgEquities[i + 1] || 0,
     }));
 
+  // Compute hero hand strength
+  let handStrength: HandStrengthInfo | null = null;
+  if (heroCards.length === 2 && board.length >= 3) {
+    const heroScore = evaluateHand([...heroCards, ...board]);
+    const category = getHandCategory(heroScore);
+    const catIndex = Math.floor(heroScore / CATEGORY_MULTIPLIER);
+
+    const hebrewMap: Record<string, string> = {
+      'High Card': 'קלף גבוה',
+      'One Pair': 'זוג',
+      'Two Pair': 'שני זוגות',
+      'Three of a Kind': 'שלישייה',
+      'Straight': 'סטרייט',
+      'Flush': 'פלאש',
+      'Full House': 'פול האוס',
+      'Four of a Kind': 'רביעייה',
+      'Straight Flush': 'סטרייט פלאש',
+    };
+
+    // Percentile: 0=high card trash, 100=straight flush
+    // Rough mapping: cat 0=5%, 1=30%, 2=50%, 3=60%, 4=70%, 5=80%, 6=88%, 7=95%, 8=99%
+    const catPercentiles = [5, 30, 50, 60, 70, 80, 88, 95, 99];
+    const rankPercentile = catPercentiles[catIndex] ?? 5;
+
+    const strength: HandStrengthInfo['strength'] =
+      catIndex >= 6 ? 'nuts' :
+      catIndex >= 4 ? 'strong' :
+      catIndex >= 2 ? 'medium' :
+      catIndex >= 1 ? 'weak' : 'air';
+
+    handStrength = {
+      category,
+      hebrewCategory: hebrewMap[category] ?? category,
+      rankPercentile,
+      strength,
+    };
+  } else if (heroCards.length === 2 && board.length === 0) {
+    // Preflop: rank by pair/suited/high card
+    const r1 = heroCards[0].rank;
+    const r2 = heroCards[1].rank;
+    const isPair = r1 === r2;
+    const isSuited = heroCards[0].suit === heroCards[1].suit;
+    const hi = Math.max(r1, r2);
+
+    let rankPercentile: number;
+    let strength: HandStrengthInfo['strength'];
+    if (isPair && hi >= 11) { rankPercentile = 95; strength = 'nuts'; }
+    else if (isPair && hi >= 8) { rankPercentile = 80; strength = 'strong'; }
+    else if (isPair) { rankPercentile = 60; strength = 'medium'; }
+    else if (hi >= 14 && Math.min(r1, r2) >= 12) { rankPercentile = 90; strength = 'nuts'; }
+    else if (hi >= 14 && isSuited) { rankPercentile = 70; strength = 'strong'; }
+    else if (hi >= 14) { rankPercentile = 55; strength = 'medium'; }
+    else if (hi >= 12 && isSuited) { rankPercentile = 50; strength = 'medium'; }
+    else if (hi >= 10 && isSuited && Math.abs(r1 - r2) <= 2) { rankPercentile = 45; strength = 'medium'; }
+    else if (hi >= 10) { rankPercentile = 30; strength = 'weak'; }
+    else if (isSuited && Math.abs(r1 - r2) <= 2) { rankPercentile = 25; strength = 'weak'; }
+    else { rankPercentile = 10; strength = 'air'; }
+
+    handStrength = {
+      category: isPair ? 'Pocket Pair' : isSuited ? 'Suited' : 'Offsuit',
+      hebrewCategory: isPair ? 'זוג כיס' : isSuited ? 'מתאים' : 'לא מתאים',
+      rankPercentile,
+      strength,
+    };
+  }
+
   return {
     heroEquity,
     opponentEquities: oppEquities,
@@ -1200,6 +1280,7 @@ export function analyzeSpotEnhanced(setup: TableSetup): EnhancedAnalysisResult {
     simulations: numSimulations,
     timeMs: 0,
     boardTexture: texture,
+    handStrength,
     opponentRangeBreakdown: rangeBreakdowns,
   };
 }

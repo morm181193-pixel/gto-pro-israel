@@ -875,10 +875,10 @@ function ResultsView({ store, heroHandLabel }: { store: SolverState; heroHandLab
         {handDetail && (
           <>
             <HandStrength
-              handType={handDetail.handType}
-              hebrewType={handDetail.hebrewType}
-              category={handDetail.category}
-              rankInRange={handDetail.rankInRange}
+              handType={engineAnalysis.handStrength?.category ?? handDetail.handType}
+              hebrewType={engineAnalysis.handStrength?.hebrewCategory ?? handDetail.hebrewType}
+              category={engineAnalysis.handStrength?.strength ?? handDetail.category}
+              rankInRange={engineAnalysis.handStrength ? Math.max(1, Math.round((100 - engineAnalysis.handStrength.rankPercentile) / 100 * handDetail.totalCombos)) : handDetail.rankInRange}
               totalCombos={handDetail.totalCombos}
             />
             <EquityDisplay
@@ -944,10 +944,10 @@ function ResultsView({ store, heroHandLabel }: { store: SolverState; heroHandLab
             {handDetail && (
               <motion.div key={selectedHand} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
                 <HandStrength
-                  handType={handDetail.handType}
-                  hebrewType={handDetail.hebrewType}
-                  category={handDetail.category}
-                  rankInRange={handDetail.rankInRange}
+                  handType={engineAnalysis.handStrength?.category ?? handDetail.handType}
+                  hebrewType={engineAnalysis.handStrength?.hebrewCategory ?? handDetail.hebrewType}
+                  category={engineAnalysis.handStrength?.strength ?? handDetail.category}
+                  rankInRange={engineAnalysis.handStrength ? Math.max(1, Math.round((100 - engineAnalysis.handStrength.rankPercentile) / 100 * handDetail.totalCombos)) : handDetail.rankInRange}
                   totalCombos={handDetail.totalCombos}
                 />
               </motion.div>
